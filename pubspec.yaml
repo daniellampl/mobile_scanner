@@ -12,12 +12,12 @@ dependencies:
     sdk: flutter
   flutter_web_plugins:
     sdk: flutter
-  js: ^0.6.3
+  js: ^0.6.4
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  lint: ^1.8.2
+  lint: ^1.10.0
 
 flutter:
   plugin:

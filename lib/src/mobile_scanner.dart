@@ -70,37 +70,45 @@ class _MobileScannerState extends State<MobileScanner>
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder(
+    return ValueListenableBuilder<MobileScannerArguments?>(
       valueListenable: controller.args,
       builder: (context, value, child) {
-        value = value as MobileScannerArguments?;
+        value = value;
         if (value == null) {
-          return Container(color: Colors.black);
+          return const ColoredBox(color: Colors.black);
         } else {
           controller.barcodes.listen((barcode) {
             if (!widget.allowDuplicates) {
               if (lastScanned != barcode.rawValue) {
                 lastScanned = barcode.rawValue;
-                widget.onDetect(barcode, value! as MobileScannerArguments);
+                widget.onDetect(barcode, value);
               }
             } else {
-              widget.onDetect(barcode, value! as MobileScannerArguments);
+              widget.onDetect(barcode, value);
             }
           });
+
           return ClipRect(
             child: SizedBox(
               width: MediaQuery.of(context).size.width,
               height: MediaQuery.of(context).size.height,
-              child: FittedBox(
-                fit: widget.fit,
-                child: SizedBox(
-                  width: value.size.width,
-                  height: value.size.height,
-                  child: kIsWeb
-                      ? HtmlElementView(viewType: value.webId!)
-                      : Texture(textureId: value.textureId!),
-                ),
-              ),
+              child: LayoutBuilder(builder: (context, constraints) {
+                final size = kIsWeb
+                    ? Size(constraints.maxWidth, constraints.maxHeight)
+                    : value!.size;
+
+                return FittedBox(
+                  fit: widget.fit,
+                  child: LayoutBuilder(
+                    builder: (_, constraints) => SizedBox.fromSize(
+                      size: size,
+                      child: kIsWeb
+                          ? HtmlElementView(viewType: value!.webId!)
+                          : Texture(textureId: value!.textureId!),
+                    ),
+                  ),
+                );
+              }),
             ),
           );
         }

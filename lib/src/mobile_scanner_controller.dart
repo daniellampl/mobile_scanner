@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:mobile_scanner/src/objects/barcode_utility.dart';
 

@@ -6,11 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_web_plugins/flutter_web_plugins.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
-import 'package:mobile_scanner/src/web/jsqr.dart';
-import 'package:mobile_scanner/src/web/media.dart';
+import 'package:mobile_scanner/src/web/web.dart';
 
 /// This plugin is the web implementation of mobile_scanner.
-/// It only supports QR codes.
 class MobileScannerWebPlugin {
   static void registerWith(Registrar registrar) {
     final PluginEventChannel event = PluginEventChannel(
@@ -30,31 +28,35 @@ class MobileScannerWebPlugin {
     event.setController(instance.controller);
   }
 
-  // Controller to send events back to the framework
+  /// A [StreamController] to send events back to the framework.
   StreamController controller = StreamController.broadcast();
 
-  // The video stream. Will be initialized later to see which camera needs to be used.
-  html.MediaStream? _localStream;
-  html.VideoElement video = html.VideoElement();
+  /// The ID of the web plugins platform view.
+  String platformViewID =
+      'MobileScanner-PlatformView-${DateTime.now().millisecondsSinceEpoch}';
 
-  // ID of the video feed
-  String viewID = 'WebScanner-${DateTime.now().millisecondsSinceEpoch}';
+  /// The ID of the [html.DivElement] the `html5-qrcode` scanner is displayed in.
+  String scannerID =
+      'MobileScanner-html5-qrcode-${DateTime.now().millisecondsSinceEpoch}';
 
-  // Determine wether device has flas
+  /// Determines wether the device has flash.
   bool hasFlash = false;
 
-  // Timer used to capture frames to be analyzed
-  Timer? _frameInterval;
+  /// The html5-qrcode interactor.
+  Html5Qrcode? _html5qrcode;
 
-  html.DivElement vidDiv = html.DivElement();
+  html.DivElement scannerDiv = html.DivElement();
 
   /// Handle incomming messages
   Future<dynamic> handleMethodCall(MethodCall call) async {
     switch (call.method) {
       case 'start':
-        return _start(call.arguments as Map);
-      case 'torch':
-        return _torch(call.arguments);
+        final cameraFacing = (call.arguments as Map).containsKey('facing')
+            // ignore: avoid_dynamic_calls
+            ? CameraFacing.values[call.arguments['facing'] as int]
+            : CameraFacing.front;
+
+        return _start(cameraFacing: cameraFacing);
       case 'stop':
         return cancel();
       default:
@@ -66,90 +68,59 @@ class MobileScannerWebPlugin {
     }
   }
 
-  /// Can enable or disable the flash if available
-  Future<void> _torch(arguments) async {
-    if (hasFlash) {
-      final track = _localStream?.getVideoTracks();
-      await track!.first.applyConstraints({
-        'advanced': {'torch': arguments == 1}
-      });
-    } else {
-      controller.addError('Device has no flash');
-    }
-  }
-
   /// Starts the video stream and the scanner
-  Future<Map> _start(Map arguments) async {
-    vidDiv.children = [video];
-
-    var cameraFacing = CameraFacing.front;
-    if (arguments.containsKey('facing')) {
-      cameraFacing = CameraFacing.values[arguments['facing'] as int];
-    }
-
+  Future<Map> _start({
+    required CameraFacing cameraFacing,
+  }) async {
     // See https://github.com/flutter/flutter/issues/41563
     // ignore: UNDEFINED_PREFIXED_NAME, avoid_dynamic_calls
     ui.platformViewRegistry.registerViewFactory(
-      viewID,
-      (int id) => vidDiv
+      platformViewID,
+      (int id) => scannerDiv
+        ..id = scannerID
         ..style.width = '100%'
         ..style.height = '100%',
     );
 
-    // Check if stream is running
-    if (_localStream != null) {
-      return {
-        'ViewID': viewID,
-        'videoWidth': video.videoWidth,
-        'videoHeight': video.videoHeight
-      };
-    }
+    final documentObserver = html.MutationObserver((_, observer) async {
+      if (html.document.contains(scannerDiv)) {
+        observer.disconnect();
 
-    try {
-      // Check if browser supports multiple camera's and set if supported
-      final Map? capabilities =
-          html.window.navigator.mediaDevices?.getSupportedConstraints();
-      if (capabilities != null && capabilities['facingMode'] as bool) {
-        final constraints = {
-          'video': VideoOptions(
-            facingMode:
-                cameraFacing == CameraFacing.front ? 'user' : 'environment',
-          )
-        };
-
-        _localStream =
-            await html.window.navigator.mediaDevices?.getUserMedia(constraints);
-      } else {
-        _localStream = await html.window.navigator.mediaDevices
-            ?.getUserMedia({'video': true});
+        await _initHtml5Qrcode(
+          cameraFacing: cameraFacing,
+          aspectRatio: scannerDiv.clientWidth / scannerDiv.clientHeight,
+        );
       }
+    });
 
-      video.srcObject = _localStream;
+    documentObserver.observe(html.document, childList: true, subtree: true);
 
-      // TODO: fix flash light. See https://github.com/dart-lang/sdk/issues/48533
-      // final track = _localStream?.getVideoTracks();
-      // if (track != null) {
-      //   final imageCapture = html.ImageCapture(track.first);
-      //   final photoCapabilities = await imageCapture.getPhotoCapabilities();
-      // }
+    return {
+      'ViewID': platformViewID,
+      'torchable': hasFlash,
+    };
+  }
 
-      // required to tell iOS safari we don't want fullscreen
-      video.setAttribute('playsinline', 'true');
+  Future<void> _initHtml5Qrcode({
+    required CameraFacing cameraFacing,
+    required double? aspectRatio,
+  }) async {
+    try {
+      _html5qrcode = Html5Qrcode(scannerID);
 
-      await video.play();
+      final facingMode =
+          cameraFacing == CameraFacing.front ? 'user' : "environment";
 
-      // Then capture a frame to be analyzed every 200 miliseconds
-      _frameInterval =
-          Timer.periodic(const Duration(milliseconds: 200), (timer) {
-        _captureFrame();
-      });
-
-      return {
-        'ViewID': viewID,
-        'videoWidth': video.videoWidth,
-        'videoHeight': video.videoHeight,
-        'torchable': hasFlash
-      };
+      await _html5qrcode!.startWithConfig(
+        MediaTrackConstraints(facingMode: facingMode),
+        configuration: Html5QrcodeCameraScanConfig(
+          aspectRatio: aspectRatio,
+        ),
+        qrCodeSuccessCallback: (decodedText, result) => controller.add({
+          'name': 'barcodeWeb',
+          'data': decodedText,
+        }),
+      );
     } catch (e) {
       throw PlatformException(code: 'MobileScannerWeb', message: '$e');
     }
@@ -160,7 +131,6 @@ class MobileScannerWebPlugin {
     final sources =
         await html.window.navigator.mediaDevices!.enumerateDevices();
     for (final e in sources) {
-      // TODO:
       // ignore: avoid_dynamic_calls
       if (e.kind == 'videoinput') {
         return true;
@@ -172,35 +142,11 @@ class MobileScannerWebPlugin {
   /// Stops the video feed and analyzer
   Future<void> cancel() async {
     try {
-      // Stop the camera stream
-      _localStream?.getTracks().forEach((track) {
-        if (track.readyState == 'live') {
-          track.stop();
-        }
-      });
+      if (_html5qrcode != null) {
+        await _html5qrcode!.stop();
+      }
     } catch (e) {
       debugPrint('Failed to stop stream: $e');
-    }
-
-    video.srcObject = null;
-    _localStream = null;
-    _frameInterval?.cancel();
-    _frameInterval = null;
-  }
-
-  /// Captures a frame and analyzes it for QR codes
-  Future<dynamic> _captureFrame() async {
-    if (_localStream == null) return null;
-    final canvas =
-        html.CanvasElement(width: video.videoWidth, height: video.videoHeight);
-    final ctx = canvas.context2D;
-
-    ctx.drawImage(video, 0, 0);
-    final imgData = ctx.getImageData(0, 0, canvas.width!, canvas.height!);
-
-    final code = jsQR(imgData.data, canvas.width, canvas.height);
-    if (code != null) {
-      controller.add({'name': 'barcodeWeb', 'data': code.data});
     }
   }
 }
