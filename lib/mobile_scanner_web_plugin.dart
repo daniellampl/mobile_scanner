@@ -75,20 +75,26 @@ class MobileScannerWebPlugin {
     // See https://github.com/flutter/flutter/issues/41563
     // ignore: UNDEFINED_PREFIXED_NAME, avoid_dynamic_calls
     ui.platformViewRegistry.registerViewFactory(
-      platformViewID,
-      (int id) => scannerDiv
-        ..id = scannerID
-        ..style.width = '100%'
-        ..style.height = '100%',
-    );
+        platformViewID,
+        (int id) => scannerDiv
+          ..id = scannerID
+          ..style.width = '100%'
+        );
 
     final documentObserver = html.MutationObserver((_, observer) async {
       if (html.document.contains(scannerDiv)) {
         observer.disconnect();
 
+        final width = scannerDiv.clientWidth;
+        final height = scannerDiv.clientHeight;
+
         await _initHtml5Qrcode(
           cameraFacing: cameraFacing,
-          aspectRatio: scannerDiv.clientWidth / scannerDiv.clientHeight,
+          aspectRatio: width / height,
+          qrBoxDimensions: QrDimensions(
+            width: 250,
+            height: 250,
+          ),
         );
       }
     });
@@ -104,6 +110,7 @@ class MobileScannerWebPlugin {
   Future<void> _initHtml5Qrcode({
     required CameraFacing cameraFacing,
     required double? aspectRatio,
+    required QrDimensions qrBoxDimensions,
   }) async {
     try {
       _html5qrcode = Html5Qrcode(scannerID);
@@ -115,6 +122,8 @@ class MobileScannerWebPlugin {
         MediaTrackConstraints(facingMode: facingMode),
         configuration: Html5QrcodeCameraScanConfig(
           aspectRatio: aspectRatio,
+          fps: 10,
+          qrbox: qrBoxDimensions,
         ),
         qrCodeSuccessCallback: (decodedText, result) => controller.add({
           'name': 'barcodeWeb',
